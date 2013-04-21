@@ -1,3 +1,34 @@
+'''
+Name:
+        reiat.py
+
+Version:
+        0.2
+
+Description:
+        renames and add coments to apis that are are called via run-time dynamic analysis in IDA.
+	To execute the script just call it in IDA 
+
+Author:
+        alexander<dot>hanel<at>gmail<dot>com
+
+License:
+reiat.py is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see
+<http://www.gnu.org/licenses/>.
+
+'''
+
 from idaapi import *
 import idautils
 import idc
@@ -90,6 +121,8 @@ class getProcAddresser():
         currentAddress = NextHead(address)
         funcEnd = GetFunctionAttr(address,  FUNCATTR_END)
         var = 'eax'
+	lastref = ''
+	lastrefAddress = None
         while currentAddress < funcEnd:
             dism = GetDisasm(currentAddress)
             # if we are not referencing the return from GetProcAddress
@@ -109,7 +142,10 @@ class getProcAddresser():
                 # rename dword address
                 MakeNameEx(GetOperandValue(currentAddress,0), apiString, SN_NOWARN)
                 return currentAddress
+	    # tracked data is being moved into another destination
             if GetMnem(currentAddress) == 'mov' and GetOpnd(currentAddress,1) == var:
+		lastref = var
+		lastrefAddress = currentAddress
                 var = GetOpnd(currentAddress,0)
             # add comments for call var
             # example:
@@ -122,8 +158,9 @@ class getProcAddresser():
                     cmt = cmt + ' ' + apiString
                     MakeComm(currentAddress, cmt)
                     return currentAddress
-            # call and eax return can not be traced. 
-            if GetMnem(currentAddress) == 'call' and var == 'eax':
+            
+	    # eax is usually over written by the the return value 
+	    if GetMnem(currentAddress) == 'call' and var == 'eax':
                 return None
             currentAddress = NextHead(currentAddress)
         return None
@@ -153,31 +190,3 @@ if __name__ == "__main__":
     ok = getProcAddresser()
     ok.rename()
         
-'''
-getlpProcName notes 
-Need to figure out a better way to parse to match this scenario.
-
-.text:10005550                 mov     esi, ds:GetModuleHandleA
-.text:10005556                 push    offset aGetsystemdirec ; "GetSystemDirectoryA"
-.text:1000555B                 mov     edi, offset ModuleName ; "kernel32.dll"
-.text:10005560                 push    edi             ; lpModuleName
-.text:10005561                 mov     dword_100106F0, 1
-.text:1000556B                 call    esi ; GetModuleHandleA
-.text:1000556D                 mov     ebx, ds:GetProcAddress
-.text:10005573                 push    eax             ; hModule
-.text:10005574                 call    ebx ; GetProcAddress
-.text:10005576                 push    offset aIsbadreadptr ; "IsBadReadPtr"
-.text:1000557B                 push    edi             ; lpModuleName
-.text:1000557C                 mov     dword_1000F47C, eax
-.text:10005581                 call    esi ; GetModuleHandleA
-.text:10005583                 push    eax             ; hModule
-'''    
-        
-        # GetProcAddress
-        # Retrieves the address of an exported function or variable
-        # from the specified dynamic-link library (DLL).
-        #
-        # FARPROC WINAPI GetProcAddress(
-        #  _In_  HMODULE hModule,
-        #  _In_  LPCSTR lpProcName
-        #);
