@@ -137,10 +137,16 @@ class getProcAddresser():
             #   mov     dword_1000F228, eax 
             # if we have the above instructions after GetProcAddress the code
             # is saving off the address of HttpAddRequestHeadersW.  
-
             if GetMnem(currentAddress) == 'mov' and GetOpnd(currentAddress,1) == var and GetOpType(currentAddress,0) == 2:
                 # rename dword address
-                MakeNameEx(GetOperandValue(currentAddress,0), apiString, SN_NOWARN)
+		status = True
+                status = MakeNameEx(GetOperandValue(currentAddress,0), apiString, SN_NOWARN)
+		if status == False:
+			# some api names are already in use. Will need to be renamed to something generic. 
+			# IDA will typically add a number to the function or api name. GetProcAddress_0
+			status = MakeNameEx(GetOperandValue(currentAddress,0), str("__" + apiString), SN_NOWARN)
+			if status == False:
+				return None
                 return currentAddress
 	    # tracked data is being moved into another destination
             if GetMnem(currentAddress) == 'mov' and GetOpnd(currentAddress,1) == var:
