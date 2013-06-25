@@ -3,7 +3,8 @@ Name:
         reiat.py
 
 Version:
-        0.2
+        0.3
+        - 0.3 fixed bug in regards to not exiting when a call was found. 
 
 Description:
         renames and add coments to apis that are are called via run-time dynamic analysis in IDA.
@@ -121,10 +122,12 @@ class getProcAddresser():
         currentAddress = NextHead(address)
         funcEnd = GetFunctionAttr(address,  FUNCATTR_END)
         var = 'eax'
-	lastref = ''
-	lastrefAddress = None
+        lastref = ''
+        lastrefAddress = None
         while currentAddress < funcEnd:
             dism = GetDisasm(currentAddress)
+            if GetMnem(currentAddress) == 'call' and var == 'eax' and GetOpnd(currentAddress,0) != 'eax':
+                return None
             # if we are not referencing the return from GetProcAddress
             # continue to next instuction
             if var not in dism:
@@ -139,19 +142,19 @@ class getProcAddresser():
             # is saving off the address of HttpAddRequestHeadersW.  
             if GetMnem(currentAddress) == 'mov' and GetOpnd(currentAddress,1) == var and GetOpType(currentAddress,0) == 2:
                 # rename dword address
-		status = True
+                status = True
                 status = MakeNameEx(GetOperandValue(currentAddress,0), apiString, SN_NOWARN)
-		if status == False:
-			# some api names are already in use. Will need to be renamed to something generic. 
-			# IDA will typically add a number to the function or api name. GetProcAddress_0
-			status = MakeNameEx(GetOperandValue(currentAddress,0), str("__" + apiString), SN_NOWARN)
-			if status == False:
-				return None
+                if status == False:
+                    # some api names are already in use. Will need to be renamed to something generic. 
+                    # IDA will typically add a number to the function or api name. GetProcAddress_0
+                    status = MakeNameEx(GetOperandValue(currentAddress,0), str("__" + apiString), SN_NOWARN)
+                    if status == False:
+                        return None
                 return currentAddress
-	    # tracked data is being moved into another destination
+            # tracked data is being moved into another destination
             if GetMnem(currentAddress) == 'mov' and GetOpnd(currentAddress,1) == var:
-		lastref = var
-		lastrefAddress = currentAddress
+                lastref = var
+                lastrefAddress = currentAddress
                 var = GetOpnd(currentAddress,0)
             # add comments for call var
             # example:
@@ -164,10 +167,9 @@ class getProcAddresser():
                     cmt = cmt + ' ' + apiString
                     MakeComm(currentAddress, cmt)
                     return currentAddress
-            
-	    # eax is usually over written by the the return value 
-	    if GetMnem(currentAddress) == 'call' and var == 'eax':
-                return None
+            # eax is usually over written by the the return value 
+            if GetMnem(currentAddress) == 'call' and var == 'eax':
+                    return None
             currentAddress = NextHead(currentAddress)
         return None
     
