@@ -3,8 +3,13 @@ Name:
         reiat.py
 
 Version:
-        0.3
-        - 0.3 fixed bug in regards to not exiting when a call was found. 
+        0.4
+        - 0.3 fixed bug in regards to not exiting when a call was found.
+        - 0.4 fixed boundaries issue due to assuming the function end will be lower
+              than the current address. Do not rely on FUNCATTR_END. 
+              Added function to check for data refs. If a section is not marked as
+              code the 0.3 version would not see the xrefs to GetProcAddress.
+              DataRefsTo(LocByName("GetProcAddress")) fixes this problem 
 
 Description:
         renames and add coments to apis that are are called via run-time dynamic analysis in IDA.
@@ -43,6 +48,11 @@ class getProcAddresser():
         'get all addresses of GetProcAddress'
         for addr in CodeRefsTo(LocByName("GetProcAddress"), 0):
             self.getProcAddressRefs.append(addr)
+        # If IDA does not recognize that the section as code it will
+        # not have a code xref. 
+        if len(self.getProcAddressRefs) == 0:
+            for addr in DataRefsTo(LocByName("GetProcAddress")):
+                self.getProcAddressRefs.append(addr)
 
     def getlpProcName(self, GetProcAddress):
         'returns the address of the 2nd argument to GetProcAddress'
@@ -120,11 +130,11 @@ class getProcAddresser():
     def traceForwardRename(self, address, apiString):
         'address is call GetProcAddress, apiString is the API name'
         currentAddress = NextHead(address)
-        funcEnd = GetFunctionAttr(address,  FUNCATTR_END)
+        funcAddress = list(FuncItems(address))
         var = 'eax'
         lastref = ''
         lastrefAddress = None
-        while currentAddress < funcEnd:
+        while currentAddress in funcAddress:
             dism = GetDisasm(currentAddress)
             if GetMnem(currentAddress) == 'call' and var == 'eax' and GetOpnd(currentAddress,0) != 'eax':
                 return None
