@@ -3,13 +3,21 @@ Name:
         reiat.py
 
 Version:
-        0.4
-        - 0.3 fixed bug in regards to not exiting when a call was found.
-        - 0.4 fixed boundaries issue due to assuming the function end will be lower
-              than the current address. Do not rely on FUNCATTR_END. 
-              Added function to check for data refs. If a section is not marked as
-              code the 0.3 version would not see the xrefs to GetProcAddress.
-              DataRefsTo(LocByName("GetProcAddress")) fixes this problem 
+        0.5
+        - 0.3 * fixed bug in regards to not exiting when a call was found.
+        - 0.4 * fixed boundaries issue due to assuming the function end will be lower
+                than the current address. Do not rely on FUNCATTR_END. 
+              * Added function to check for data refs. If a section is not marked as
+                code the 0.3 version would not see the xrefs to GetProcAddress.
+                DataRefsTo(LocByName("GetProcAddress")) fixes this problem
+        - 0.5 * Fixed bug to properly return address address of last mov to unnameable address
+              * Added simple viewer. Can be disabled by changing - if True: Viewer(ok.log) to
+                if False: Viewer(ok.log)
+              * Saves a log of the results in an list Saved in class getProcAddresser object.log
+                It's a list that contains tupple of
+                (Original Address of GetProcAddress, lpProcName, Last address reference, type)
+                The type can be xrf (for named dword), call (call eax ; ExitProcess) or the last
+                operand ([esi+4]). If the values could not be found the tupple item will contain None. 
 
 Description:
         renames and add coments to apis that are are called via run-time dynamic analysis in IDA.
@@ -43,6 +51,7 @@ class getProcAddresser():
     def __init__(self):
         self.getProcAddressRefs = []
         self.registers = ['eax', 'ebx', 'ecx', 'edx', 'esi', 'edi', 'esp', 'ebp']
+        self.log = [] 
 
     def getRefs(self):
         'get all addresses of GetProcAddress'
@@ -137,7 +146,7 @@ class getProcAddresser():
         while currentAddress in funcAddress:
             dism = GetDisasm(currentAddress)
             if GetMnem(currentAddress) == 'call' and var == 'eax' and GetOpnd(currentAddress,0) != 'eax':
-                return None
+                return (None, None)
             # if we are not referencing the return from GetProcAddress
             # continue to next instuction
             if var not in dism:
@@ -159,8 +168,8 @@ class getProcAddresser():
                     # IDA will typically add a number to the function or api name. GetProcAddress_0
                     status = MakeNameEx(GetOperandValue(currentAddress,0), str("__" + apiString), SN_NOWARN)
                     if status == False:
-                        return None
-                return currentAddress
+                        return (currentAddress, GetOpnd(currentAddress,0))
+                return (currentAddress, GetOperandValue(currentAddress,0))
             # tracked data is being moved into another destination
             if GetMnem(currentAddress) == 'mov' and GetOpnd(currentAddress,1) == var:
                 lastref = var
@@ -176,12 +185,15 @@ class getProcAddresser():
                 if apiString not in cmt:
                     cmt = cmt + ' ' + apiString
                     MakeComm(currentAddress, cmt)
-                    return currentAddress
+                    return (True,currentAddress)
             # eax is usually over written by the the return value 
             if GetMnem(currentAddress) == 'call' and var == 'eax':
-                    return None
+                    return (None, None)
             currentAddress = NextHead(currentAddress)
-        return None
+
+        if  GetMnem(lastrefAddress) == 'mov' and GetOpType(lastrefAddress,0) != 2:
+           return (lastrefAddress, GetOpnd(lastrefAddress,0))
+        return (None, None)    
     
     def rename(self):
         self.getRefs()
@@ -189,22 +201,84 @@ class getProcAddresser():
             lpProcNameAddr = self.getlpProcName(addr)
             if lpProcNameAddr == None:
                 print "ERROR: Address of lpProcName at %s was not found" % hex(addr)
+                self.log.append((addr, None, None, None))
                 continue
             lpProcName =  self.getString(lpProcNameAddr)
             if lpProcName == None:
                 lpProcName = self.traceBack(lpProcNameAddr)
             if lpProcName == None:
                 print "ERROR: String of lpProcName at %s was not found" % hex(addr)
+                self.log.append((addr, None, None, None))
                 continue
             status = self.traceForwardRename(addr, lpProcName)
-            if status == None:
-                print "ERROR: Could not rename address at %s " % hex(addr)
-                continue
-            else:
-                print "RENAMED %s at %s" % ( lpProcName, hex(status))
- 
+            if status[0] == None and status[1] == None:
+                print "ERROR: Could not find forward variable refs for %s " % hex(addr)
+                print status[0], status[1]
+                self.log.append((addr, lpProcName, None, None))
+            # Could not rename value, example:  mov [esi+0Ch], eax
+            elif type(status[1]) == str:
+                print "Unnameable %s at %s" % ( lpProcName, hex(status[0]))
+                self.log.append((addr, lpProcName, status[0], status[1]))
+            # added comment 
+            elif status[0] == True and status[1]:
+                print "Comment %s at %s" % ( lpProcName, hex(status[1]))
+                self.log.append((addr, lpProcName, status[1], 'call'))
+            # renamed a dword
+            elif status[0] and status[1]:
+                print "Renamed %s at %s" % ( lpProcName, hex(status[0]))
+                self.log.append((addr, lpProcName, status[1], 'xref')) 
+
+class Viewer(idaapi.simplecustviewer_t):
+    # modified version of http://dvlabs.tippingpoint.com/blog/2011/05/11/mindshare-extending-ida-custviews
+	def __init__(self, data):
+		self.fourccs = data
+		self.Create()
+		self.Show()
+
+	def Create(self):
+		title = "Dynamic APIs"
+		idaapi.simplecustviewer_t.Create(self, title)
+		c = "%s%43s%11s   %s" % ("Address", "API Name", "Last xref", "Type")
+		comment = idaapi.COLSTR(c, idaapi.SCOLOR_BINPREF)
+		self.AddLine(comment)
+		
+		for item in self.fourccs:
+			addy = item[0]
+			api_str = item[1]
+			last_ref = item[2]
+                        type_ref = item[3]
+			address_element = idaapi.COLSTR("0x%08x" % addy, idaapi.SCOLOR_REG)
+			api_element = idaapi.COLSTR("%40s" % api_str, idaapi.SCOLOR_VOIDOP)
+			if type(last_ref) == int:
+                            last_element = idaapi.COLSTR("0x%08x" % last_ref, idaapi.SCOLOR_REG)
+                        else:
+                            last_element = idaapi.COLSTR("%10s" % last_ref, idaapi.SCOLOR_REG)
+                        type_element = idaapi.COLSTR("%s" % type_ref, idaapi.SCOLOR_REG)
+			line = address_element + api_element + "  " + last_element + "  " +  type_element
+			self.AddLine(line)
+		return True
+
+	def OnDblClick(self, something):
+		value = self.GetCurrentWord()
+		if value[:2] == '0x':
+                    Jump(int(value, 16))
+		return True  
+
+	def OnHint(self, lineno):
+		if lineno < 2: return False
+		else: lineno -= 2
+		line = self.GetCurrentWord()
+		if line == None: return False
+		if "0x" not in line: return False
+		# skip COLSTR formatting, find address
+		addy = int(line, 16)
+		disasm = idaapi.COLSTR(GetDisasm(addy) + "\n", idaapi.SCOLOR_DREF)
+		return (1, disasm)  
 
 if __name__ == "__main__":
     ok = getProcAddresser()
     ok.rename()
+    if True:
+        Viewer(ok.log)
+
         
